@@ -1,4 +1,4 @@
-root {
+:root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -14,72 +14,125 @@ root {
   -webkit-text-size-adjust: 100%;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-body {
+/* General body styles */
+body, html {
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-#controlPanel {
-  padding: 1rem;
-}
-
-#statusPanel {
-  padding: 1rem;
-}
-
-#map {
+  padding: 0;
   width: 100%;
-  height: 80vh;
+  height: 100%; /* Ensures full height */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-button {
+/* App container */
+#app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Map container styling */
+#map {
+  width: 100%; /* Full width */
+  height: 100%; /* Full height */
+  position: absolute; /* Fills the parent container */
+  top: 0;
+  left: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Highlight Caches with Brighter Colors */
+.leaflet-interactive {
+  stroke: #b9b9b9 !important;
+  fill: #000000 !important;
+  fill-opacity: 0.6 !important;
+}
+
+/* Control Panel */
+#controlPanel {
+  position: fixed;
+  bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.7);
   border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
+  padding: 10px;
+  z-index: 1000; /* Ensure it overlays the map */
+}
+#controlPanel button {
+  background-color: #1a1a1a;
+  color: white;
   font-size: 1em;
   font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
+  border-radius: 8px;
+  border: 1px solid #646cff;
+  padding: 0.6em 1.2em;
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+#controlPanel button:hover {
+  background-color: #646cff;
+  border-color: #535bf2;
+}
+#controlPanel button:focus {
+  outline: 2px solid #535bf2;
 }
 
-button:hover {
-  border-color: #646cff;
+/* Status Panel */
+#statusPanel {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 1rem;
+  font-weight: 400;
+  border-radius: 8px;
+  padding: 10px;
+  z-index: 1000; /* Ensure it overlays the map */
 }
 
-button:focus,
+/* Leaflet Popups */
+.leaflet-popup-content-wrapper {
+  background-color: rgba(0, 0, 0, 0.9);
+  color: white;
+  border-radius: 8px;
+  padding: 10px;
+}
+.leaflet-popup-content-wrapper button {
+  background-color: #1a1a1a;
+  color: white;
+  border: 1px solid #646cff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  margin-top: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+.leaflet-popup-content-wrapper button:hover {
+  background-color: #646cff;
+  border-color: #535bf2;
+}
+
+/* Accessibility Improvements */
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+/* Responsive Design */
+@media (max-width: 768px) {
+  #map {
+    height: 60vh; /* Reduce height for smaller screens */
   }
-
-  a:hover {
-    color: #747bff;
+  #controlPanel {
+    flex-direction: column;
   }
-
-  button {
-    background-color: #f9f9f9;
+  #controlPanel button {
+    width: 100%;
   }
 }

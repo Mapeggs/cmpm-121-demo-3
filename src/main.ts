@@ -1,203 +1,164 @@
+// Imports
 import leaflet from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
 
-// Constants
-const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
+// Coordinate conversion function
+function toGridCell(
+  latitude: number,
+  longitude: number,
+): { i: number; j: number } {
+  const latFactor = Math.round(latitude * 1e4);
+  const lngFactor = Math.round(longitude * 1e4);
+  return { i: latFactor, j: lngFactor };
+}
+
+class Cell {
+  constructor(public latitude: number, public longitude: number) {}
+}
+
+// Flyweight pattern for cells
+class CellFactory {
+  private static cells = new Map<string, Cell>();
+
+  public static getCell(latitude: number, longitude: number): Cell {
+    const key = `${latitude},${longitude}`;
+    if (!CellFactory.cells.has(key)) {
+      CellFactory.cells.set(key, new Cell(latitude, longitude));
+    }
+    return CellFactory.cells.get(key)!;
+  }
+}
+
+// Game parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
-const TILE_DEGREES = 0.0001;
+const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
-const MOVEMENT_DELTA = 0.0001;
-const VISIBLE_RADIUS = 0.001;
-let playerCoins = 0;
 
-// Map for storing cache cells and rectangles
-const cacheMap = new Map<
-  string,
-  { cell: CacheCell; rect: leaflet.Rectangle }
->();
+// Wait for the DOM to load before initializing the map
+document.addEventListener("DOMContentLoaded", () => {
+  // Convert the center position to grid cells (log this info)
+  const centerGrid = toGridCell(36.98949379578401, -122.06277128548504);
+  console.log(`Center Grid Cell: ${centerGrid.i}, ${centerGrid.j}`);
 
-// Define a Memento to save and restore the cache state
-class CacheMemento {
-  private state = new Map<string, Coin[]>();
+  // Use CellFactory if part of the planned pattern
+  const centerCell = CellFactory.getCell(
+    36.98949379578401,
+    -122.06277128548504,
+  );
+  console.log(`Obtained cell for center location: `, centerCell);
 
-  saveState(cellKey: string, coins: Coin[]) {
-    this.state.set(cellKey, coins.slice());
-  }
+  // Create map reference centered at Oakes College
+  const map = leaflet.map(document.getElementById("map")!, {
+    center: leaflet.latLng(36.98949379578401, -122.06277128548504),
+    zoom: GAMEPLAY_ZOOM_LEVEL,
+    minZoom: GAMEPLAY_ZOOM_LEVEL,
+    maxZoom: GAMEPLAY_ZOOM_LEVEL,
+    zoomControl: false,
+    scrollWheelZoom: false,
+  });
 
-  restoreState(cellKey: string): Coin[] | null {
-    return this.state.has(cellKey) ? this.state.get(cellKey)! : null;
-  }
-}
-
-const cacheMemento = new CacheMemento();
-
-// Class to represent a grid cell
-class CacheCell {
-  coins: Coin[] = [];
-  constructor(public i: number, public j: number) {}
-}
-
-// Class to represent a coin with a unique ID based on cache location and serial number
-class Coin {
-  constructor(public i: number, public j: number, public serial: number) {}
-  get id() {
-    return `${this.i}:${this.j}#${this.serial}`;
-  }
-}
-
-// Initialize the map
-const map = leaflet.map(document.getElementById("map")!, {
-  center: OAKES_CLASSROOM,
-  zoom: GAMEPLAY_ZOOM_LEVEL,
-  minZoom: GAMEPLAY_ZOOM_LEVEL,
-  maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
-});
-
-// Add a tile layer
-leaflet
-  .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  // Add tile layer to the map
+  leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution:
       '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  })
-  .addTo(map);
+  }).addTo(map);
 
-// Place the player marker
-const playerMarker = leaflet.marker(OAKES_CLASSROOM).addTo(map);
-playerMarker.bindTooltip("You are here!");
+  // Add a player marker to the map
+  const playerMarker = leaflet.marker(map.getCenter());
+  playerMarker.bindTooltip("That's you!");
+  playerMarker.addTo(map);
 
-// Display player's current coin count
-const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
-statusPanel.innerHTML = "Coins: 0";
+  // Player points display
+  let playerPoints = 0;
+  let playerCoins = 0;
+  const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
+  statusPanel.innerHTML = "No points yet...";
 
-// Convert latitude and longitude to grid coordinates
-function latLngToGrid(lat: number, lng: number): { i: number; j: number } {
-  return {
-    i: Math.floor(lat / TILE_DEGREES),
-    j: Math.floor(lng / TILE_DEGREES),
-  };
-}
+  let coinSerial = 0; // Tracking serial for unique coin IDs
 
-// Function to get or create a cache cell
-function getOrCreateCacheCell(i: number, j: number): CacheCell {
-  const key = `${i}:${j}`;
-  if (!cacheMap.has(key)) {
-    cacheMap.set(key, { cell: new CacheCell(i, j), rect: null! });
-  }
-  return cacheMap.get(key)!.cell;
-}
+  // Function to spawn caches on the map
+  function spawnCache(i: number, j: number) {
+    const origin = map.getCenter();
+    const bounds = leaflet.latLngBounds([
+      [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
+      [
+        origin.lat + (i + 1) * TILE_DEGREES,
+        origin.lng + (j + 1) * TILE_DEGREES,
+      ],
+    ]);
 
-// Function to generate caches around the player
-function spawnCache(i: number, j: number) {
-  const cacheCell = getOrCreateCacheCell(i, j);
+    const rect = leaflet.rectangle(bounds, {
+      color: "#000000",
+      weight: 2,
+    });
+    rect.addTo(map);
 
-  // Convert grid coordinates to lat/lng bounds
-  const bounds = leaflet.latLngBounds([
-    [
-      OAKES_CLASSROOM.lat + i * TILE_DEGREES,
-      OAKES_CLASSROOM.lng + j * TILE_DEGREES,
-    ],
-    [
-      OAKES_CLASSROOM.lat + (i + 1) * TILE_DEGREES,
-      OAKES_CLASSROOM.lng + (j + 1) * TILE_DEGREES,
-    ],
-  ]);
+    // Random point value and coin count
+    let pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 10) +
+      1;
+    let cacheCoins = 0;
 
-  // Create a new rectangle if not already created
-  const key = `${i}:${j}`;
-  if (!cacheMap.get(key)?.rect) {
-    const rect = leaflet.rectangle(bounds, { color: "#646cff", weight: 1 })
-      .addTo(map);
+    // Unique ID for each coin based on spawning cache
+    const coinId = `${i}:${j}#${coinSerial++}`;
 
     rect.bindPopup(() => {
       const popupDiv = document.createElement("div");
       popupDiv.innerHTML = `
-        <div>Cache at ${i}:${j}</div>
-        <div>Coins: ${cacheCell.coins.map((coin) => coin.id).join(", ")}</div>
-        <button id="collect">Collect Coins</button>
-        <button id="deposit">Deposit Coins</button>`;
+        <div>Coin ID: ${coinId}</div>
+        <div>Cache at "${i},${j}"</div>
+        <div>Value: <span id="value">${pointValue}</span></div>
+        <div>Coins: <span id="cacheCoins">${cacheCoins}</span></div>
+        <button id="collect">Collect Coin</button>
+        <button id="deposit">Deposit Coin</button>`;
 
+      // Button click to collect coin
       popupDiv.querySelector<HTMLButtonElement>("#collect")!.onclick = () => {
-        playerCoins += cacheCell.coins.length;
-        cacheCell.coins = [];
-        statusPanel.innerHTML = `Coins: ${playerCoins}`;
-        popupDiv.querySelector("div:nth-child(2)")!.textContent = "Coins: 0";
+        if (pointValue > 0) {
+          pointValue--;
+          cacheCoins++;
+          playerCoins++;
+          playerPoints++;
+          popupDiv.querySelector<HTMLSpanElement>("#value")!.textContent =
+            pointValue.toString();
+          popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.textContent =
+            cacheCoins.toString();
+          statusPanel.innerHTML =
+            `Points: ${playerPoints} | Coins: ${playerCoins}`;
+          console.log(`Collected a coin from cache at (${i}, ${j}).`);
+        }
       };
 
+      // Button click to deposit coin
       popupDiv.querySelector<HTMLButtonElement>("#deposit")!.onclick = () => {
         if (playerCoins > 0) {
-          const newCoin = new Coin(i, j, cacheCell.coins.length);
-          cacheCell.coins.push(newCoin);
-          playerCoins--;
-          popupDiv.querySelector("div:nth-child(2)")!.textContent = `Coins: ${
-            cacheCell.coins.map((coin) => coin.id).join(", ")
-          }`;
-          statusPanel.innerHTML = `Coins: ${playerCoins}`;
+          const depositAmount = Math.min(playerCoins, 5); // Max deposit: 5 coins
+          cacheCoins += depositAmount;
+          playerCoins -= depositAmount;
+          popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.textContent =
+            cacheCoins.toString();
+          statusPanel.innerHTML =
+            `Points: ${playerPoints} | Coins: ${playerCoins}`;
+          console.log(
+            `Deposited ${depositAmount} coin(s) into cache at (${i}, ${j}).`,
+          );
         }
       };
 
       return popupDiv;
     });
-
-    cacheMap.set(key, { cell: cacheCell, rect });
-  }
-}
-
-// Update the player's location and regenerate nearby caches
-function movePlayer(direction: string) {
-  switch (direction) {
-    case "north":
-      OAKES_CLASSROOM.lat += MOVEMENT_DELTA;
-      break;
-    case "south":
-      OAKES_CLASSROOM.lat -= MOVEMENT_DELTA;
-      break;
-    case "east":
-      OAKES_CLASSROOM.lng += MOVEMENT_DELTA;
-      break;
-    case "west":
-      OAKES_CLASSROOM.lng -= MOVEMENT_DELTA;
-      break;
   }
 
-  playerMarker.setLatLng(OAKES_CLASSROOM);
-
-  cacheMap.forEach(({ cell, rect }, key) => {
-    const cellLatLng = leaflet.latLng(
-      OAKES_CLASSROOM.lat + cell.i * TILE_DEGREES,
-      OAKES_CLASSROOM.lng + cell.j * TILE_DEGREES,
-    );
-
-    if (map.distance(OAKES_CLASSROOM, cellLatLng) > VISIBLE_RADIUS) {
-      map.removeLayer(rect); // Safely remove the layer
-      cacheMemento.saveState(key, cell.coins);
-    } else {
-      spawnCache(cell.i, cell.j);
-      const savedCoins = cacheMemento.restoreState(key);
-      if (savedCoins) cell.coins = savedCoins;
-    }
-  });
-}
-
-// Event listeners for button movement controls
-document.getElementById("north")!.onclick = () => movePlayer("north");
-document.getElementById("south")!.onclick = () => movePlayer("south");
-document.getElementById("east")!.onclick = () => movePlayer("east");
-document.getElementById("west")!.onclick = () => movePlayer("west");
-
-const playerGrid = latLngToGrid(OAKES_CLASSROOM.lat, OAKES_CLASSROOM.lng);
-for (let di = -NEIGHBORHOOD_SIZE; di <= NEIGHBORHOOD_SIZE; di++) {
-  for (let dj = -NEIGHBORHOOD_SIZE; dj <= NEIGHBORHOOD_SIZE; dj++) {
-    const gridI = playerGrid.i + di;
-    const gridJ = playerGrid.j + dj;
-    if (luck(`${gridI},${gridJ}`) < CACHE_SPAWN_PROBABILITY) {
-      spawnCache(gridI, gridJ);
+  // Populate the map with caches
+  for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
+    for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
+      if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
+        spawnCache(i, j);
+      }
     }
   }
-}
+});
