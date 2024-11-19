@@ -5,53 +5,21 @@ import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
 
-// Coordinate conversion function
-function toGridCell(
-  latitude: number,
-  longitude: number,
-): { i: number; j: number } {
-  const latFactor = Math.round(latitude * 1e4);
-  const lngFactor = Math.round(longitude * 1e4);
-  return { i: latFactor, j: lngFactor };
-}
-
-class Cell {
-  constructor(public latitude: number, public longitude: number) {}
-}
-
-// Flyweight pattern for cells
-class CellFactory {
-  private static cells = new Map<string, Cell>();
-
-  public static getCell(latitude: number, longitude: number): Cell {
-    const key = `${latitude},${longitude}`;
-    if (!CellFactory.cells.has(key)) {
-      CellFactory.cells.set(key, new Cell(latitude, longitude));
-    }
-    return CellFactory.cells.get(key)!;
-  }
-}
-
 // Game parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
-const NEIGHBORHOOD_SIZE = 8;
-const CACHE_SPAWN_PROBABILITY = 0.1;
+const CACHE_COUNT = 50; // Total number of caches to randomly spawn
+const MOVEMENT_DELTA = TILE_DEGREES;
 
 // Wait for the DOM to load before initializing the map
 document.addEventListener("DOMContentLoaded", () => {
-  // Convert the center position to grid cells (log this info)
-  const centerGrid = toGridCell(36.98949379578401, -122.06277128548504);
-  console.log(`Center Grid Cell: ${centerGrid.i}, ${centerGrid.j}`);
+  // Player variables
+  let playerPoints = 0;
+  let playerCoins = 0;
+  const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
+  statusPanel.innerHTML = "No points yet...";
 
-  // Use CellFactory if part of the planned pattern
-  const centerCell = CellFactory.getCell(
-    36.98949379578401,
-    -122.06277128548504,
-  );
-  console.log(`Obtained cell for center location: `, centerCell);
-
-  // Create map reference centered at Oakes College
+  // Initialize map
   const map = leaflet.map(document.getElementById("map")!, {
     center: leaflet.latLng(36.98949379578401, -122.06277128548504),
     zoom: GAMEPLAY_ZOOM_LEVEL,
@@ -61,104 +29,136 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollWheelZoom: false,
   });
 
-  // Add tile layer to the map
   leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution:
       '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
 
-  // Add a player marker to the map
-  const playerMarker = leaflet.marker(map.getCenter());
+  // Player marker
+  const playerMarker = leaflet.marker(map.getCenter(), { draggable: false });
   playerMarker.bindTooltip("That's you!");
   playerMarker.addTo(map);
 
-  // Player points display
-  let playerPoints = 0;
-  let playerCoins = 0;
-  const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
-  statusPanel.innerHTML = "No points yet...";
+  // Caches map
+  const cacheMap = new Map<
+    string,
+    { rect: leaflet.Rectangle; popup: HTMLElement }
+  >();
 
-  let coinSerial = 0; // Tracking serial for unique coin IDs
-
-  // Function to spawn caches on the map
-  function spawnCache(i: number, j: number) {
-    const origin = map.getCenter();
+  // Function to spawn caches
+  function spawnCache(lat: number, lng: number) {
     const bounds = leaflet.latLngBounds([
-      [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-      [
-        origin.lat + (i + 1) * TILE_DEGREES,
-        origin.lng + (j + 1) * TILE_DEGREES,
-      ],
+      [lat, lng],
+      [lat + TILE_DEGREES, lng + TILE_DEGREES],
     ]);
 
-    const rect = leaflet.rectangle(bounds, {
-      color: "#000000",
-      weight: 2,
-    });
-    rect.addTo(map);
-
-    // Random point value and coin count
-    let pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 10) +
-      1;
     let cacheCoins = 0;
+    let pointValue = Math.floor(luck(`${lat},${lng}`) * 10) + 1;
 
-    // Unique ID for each coin based on spawning cache
-    const coinId = `${i}:${j}#${coinSerial++}`;
+    const rect = leaflet.rectangle(bounds, {
+      color: "#ff0000",
+      weight: 2,
+    }).addTo(map);
 
-    rect.bindPopup(() => {
-      const popupDiv = document.createElement("div");
-      popupDiv.innerHTML = `
-        <div>Coin ID: ${coinId}</div>
-        <div>Cache at "${i},${j}"</div>
-        <div>Value: <span id="value">${pointValue}</span></div>
-        <div>Coins: <span id="cacheCoins">${cacheCoins}</span></div>
-        <button id="collect">Collect Coin</button>
-        <button id="deposit">Deposit Coin</button>`;
+    // Create popup
+    const popupDiv = document.createElement("div");
+    popupDiv.innerHTML = `
+      <div>Cache at (${lat.toFixed(5)}, ${lng.toFixed(5)})</div>
+      <div>Value: <span id="value">${pointValue}</span></div>
+      <div>Coins: <span id="cacheCoins">${cacheCoins}</span></div>
+      <button id="collect">Collect Coin</button>
+      <button id="deposit">Deposit Coin</button>
+    `;
 
-      // Button click to collect coin
-      popupDiv.querySelector<HTMLButtonElement>("#collect")!.onclick = () => {
-        if (pointValue > 0) {
-          pointValue--;
-          cacheCoins++;
-          playerCoins++;
-          playerPoints++;
-          popupDiv.querySelector<HTMLSpanElement>("#value")!.textContent =
-            pointValue.toString();
-          popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.textContent =
-            cacheCoins.toString();
-          statusPanel.innerHTML =
-            `Points: ${playerPoints} | Coins: ${playerCoins}`;
-          console.log(`Collected a coin from cache at (${i}, ${j}).`);
-        }
-      };
+    // Collect coins
+    popupDiv.querySelector<HTMLButtonElement>("#collect")!.onclick = () => {
+      if (pointValue > 0) {
+        playerCoins += pointValue; // Collect all remaining points
+        playerPoints += pointValue; // Add points to total
+        pointValue = 0; // Cache is fully collected
+        statusPanel.innerHTML =
+          `Points: ${playerPoints} | Coins: ${playerCoins}`;
 
-      // Button click to deposit coin
-      popupDiv.querySelector<HTMLButtonElement>("#deposit")!.onclick = () => {
-        if (playerCoins > 0) {
-          const depositAmount = Math.min(playerCoins, 5); // Max deposit: 5 coins
-          cacheCoins += depositAmount;
-          playerCoins -= depositAmount;
-          popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.textContent =
-            cacheCoins.toString();
-          statusPanel.innerHTML =
-            `Points: ${playerPoints} | Coins: ${playerCoins}`;
-          console.log(
-            `Deposited ${depositAmount} coin(s) into cache at (${i}, ${j}).`,
-          );
-        }
-      };
+        // Remove the cache from the map and cacheMap
+        rect.remove(); // Remove rectangle from map
+        cacheMap.delete(`${lat}:${lng}`); // Remove cache entry
+        console.log(
+          `Cache at (${lat}, ${lng}) has been collected and removed.`,
+        );
+      }
+    };
 
-      return popupDiv;
+    // Deposit coins
+    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.onclick = () => {
+      if (playerCoins > 0) {
+        const depositAmount = Math.min(playerCoins, 5);
+        cacheCoins += depositAmount;
+        playerCoins -= depositAmount;
+
+        popupDiv.querySelector("#cacheCoins")!.textContent = cacheCoins
+          .toString();
+        statusPanel.innerHTML =
+          `Points: ${playerPoints} | Coins: ${playerCoins}`;
+      }
+    };
+
+    rect.bindPopup(popupDiv);
+    cacheMap.set(`${lat}:${lng}`, { rect, popup: popupDiv });
+  }
+
+  // Function to generate random latitude and longitude within map bounds
+  function getRandomLatLng(
+    center: leaflet.LatLng,
+    radius: number,
+  ): [number, number] {
+    const latOffset = (Math.random() - 0.5) * 2 * radius;
+    const lngOffset = (Math.random() - 0.5) * 2 * radius;
+    return [center.lat + latOffset, center.lng + lngOffset];
+  }
+
+  // Populate map with random caches
+  const center = map.getCenter();
+  for (let i = 0; i < CACHE_COUNT; i++) {
+    const [lat, lng] = getRandomLatLng(center, 0.01); // Radius of 0.01 degrees
+    spawnCache(lat, lng);
+  }
+
+  // Handle player movement
+  function movePlayer(direction: string) {
+    const playerPosition = playerMarker.getLatLng();
+    let newLat = playerPosition.lat;
+    let newLng = playerPosition.lng;
+
+    switch (direction) {
+      case "north":
+        newLat += MOVEMENT_DELTA;
+        break;
+      case "south":
+        newLat -= MOVEMENT_DELTA;
+        break;
+      case "east":
+        newLng += MOVEMENT_DELTA;
+        break;
+      case "west":
+        newLng -= MOVEMENT_DELTA;
+        break;
+    }
+
+    const newPosition = leaflet.latLng(newLat, newLng);
+    playerMarker.setLatLng(newPosition);
+
+    // Check for overlapping caches
+    cacheMap.forEach(({ rect }, _key) => {
+      if (rect.getBounds().contains(newPosition)) {
+        rect.openPopup();
+      }
     });
   }
 
-  // Populate the map with caches
-  for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
-    for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
-      if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
-        spawnCache(i, j);
-      }
-    }
-  }
+  // Add movement controls
+  document.getElementById("north")!.onclick = () => movePlayer("north");
+  document.getElementById("south")!.onclick = () => movePlayer("south");
+  document.getElementById("east")!.onclick = () => movePlayer("east");
+  document.getElementById("west")!.onclick = () => movePlayer("west");
 });
