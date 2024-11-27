@@ -229,7 +229,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  // Function to update movement polylin
+  // Function to update movement polyli
   function updatePolyline(newLatLng: leaflet.LatLng) {
     const latLngs = movementPolyline.getLatLngs() as leaflet.LatLng[];
     latLngs.push(newLatLng);
