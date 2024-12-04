@@ -48,16 +48,81 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const movementPolyline = leaflet.polyline([], { color: "blue" }).addTo(map);
 
-  const cacheMap = new Map<
-    string,
-    { rect: leaflet.Rectangle; popup: HTMLElement }
-  >();
+  const cacheMap = new Map<string, { rect: leaflet.Rectangle; popup: HTMLElement }>();
 
   // Function to update the status panel
   function updateStatusPanel() {
-    statusPanel.innerHTML =
-      `Points: ${playerPoints} | Coins: ${playerCoins} | Deposited: ${totalDepositedCoins}`;
+    statusPanel.innerHTML = `Points: ${playerPoints} | Coins: ${playerCoins} | Deposited: ${totalDepositedCoins}`;
   }
+
+  // Standalone function to create the popup content
+  function createCachePopup(lat: number, lng: number, pointValue: number, cacheCoins: number): HTMLDivElement {
+    const popupDiv = document.createElement("div");
+    popupDiv.innerHTML = `
+      <div>Cache at (${lat.toFixed(5)}, ${lng.toFixed(5)})</div>
+      <div>Value: <span id="value">${pointValue}</span></div>
+      <div>Coins: <span id="cacheCoins">${cacheCoins}</span></div>
+      <button id="collect">Collect Coin</button>
+      <button id="deposit">Deposit Coin</button>
+      <button id="centerMap">Center on Cache</button>
+    `;
+    return popupDiv;
+  }
+
+  function spawnCache(
+    lat: number,
+    lng: number,
+    pointValue: number = Math.floor(Math.random() * 10) + 1,
+    cacheCoins: number = 0,
+  ) {
+    const bounds = leaflet.latLngBounds([
+      [lat, lng],
+      [lat + TILE_DEGREES, lng + TILE_DEGREES],
+    ]);
+
+    const rect = leaflet.rectangle(bounds, {
+      color: "#ff0000",
+      weight: 2,
+    }).addTo(map);
+
+    const popupDiv = createCachePopup(lat, lng, pointValue, cacheCoins);
+
+    // Bind specific logic to the popup
+    popupDiv.querySelector<HTMLButtonElement>("#collect")!.onclick = () => {
+      if (pointValue > 0) {
+        playerCoins += pointValue;
+        playerPoints += pointValue;
+        pointValue = 0;
+        rect.remove(); // Remove cache from map
+        cacheMap.delete(`${lat}:${lng}`); // Remove from tracking
+        updateStatusPanel(); // Update UI
+        saveGameState(); // Persist changes
+      }
+    };
+
+    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.onclick = () => {
+      if (playerCoins > 0) {
+        const depositAmount = Math.min(playerCoins, 5);
+        cacheCoins += depositAmount;
+        playerCoins -= depositAmount;
+        totalDepositedCoins += depositAmount; // Track deposits
+        popupDiv.querySelector("#cacheCoins")!.textContent = cacheCoins.toString();
+        updateStatusPanel(); // Update UI
+        saveGameState(); // Persist changes
+      }
+    };
+
+    popupDiv.querySelector<HTMLButtonElement>("#centerMap")!.onclick = () => {
+      map.setView(rect.getBounds().getCenter(), GAMEPLAY_ZOOM_LEVEL);
+    };
+
+    rect.bindPopup(popupDiv);
+    cacheMap.set(`${lat}:${lng}`, { rect, popup: popupDiv });
+  }
+
+
+
+
 
   // Load game state and use it
   function loadGameState() {
@@ -94,9 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Reset game state
   document.getElementById("reset")!.onclick = () => {
-    if (
-      confirm("Are you sure you want to erase your game state and start over?")
-    ) {
+    if (confirm("Are you sure you want to erase your game state and start over?")) {
       playerPoints = 0;
       playerCoins = 0;
       totalDepositedCoins = 0; // Reset total deposited coins
@@ -105,10 +168,7 @@ document.addEventListener("DOMContentLoaded", () => {
       cacheMap.clear();
       localStorage.clear();
 
-      const originalSpawnPoint = leaflet.latLng(
-        36.98949379578401,
-        -122.06277128548504,
-      );
+      const originalSpawnPoint = leaflet.latLng(36.98949379578401, -122.06277128548504);
       playerMarker.setLatLng(originalSpawnPoint);
       map.setView(originalSpawnPoint, GAMEPLAY_ZOOM_LEVEL);
 
@@ -124,69 +184,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  // Function to spawn caches
-  function spawnCache(
-    lat: number,
-    lng: number,
-    pointValue: number = Math.floor(Math.random() * 10) + 1,
-    cacheCoins: number = 0,
-  ) {
-    const bounds = leaflet.latLngBounds([
-      [lat, lng],
-      [lat + TILE_DEGREES, lng + TILE_DEGREES],
-    ]);
-
-    const rect = leaflet.rectangle(bounds, {
-      color: "#ff0000",
-      weight: 2,
-    }).addTo(map);
-
-    const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `
-      <div>Cache at (${lat.toFixed(5)}, ${lng.toFixed(5)})</div>
-      <div>Value: <span id="value">${pointValue}</span></div>
-      <div>Coins: <span id="cacheCoins">${cacheCoins}</span></div>
-      <button id="collect">Collect Coin</button>
-      <button id="deposit">Deposit Coin</button>
-      <button id="centerMap">Center on Cache</button>
-    `;
-
-    // Collect coins from the cache
-    popupDiv.querySelector<HTMLButtonElement>("#collect")!.onclick = () => {
-      if (pointValue > 0) {
-        playerCoins += pointValue;
-        playerPoints += pointValue;
-        pointValue = 0;
-        rect.remove(); // Remove cache from map
-        cacheMap.delete(`${lat}:${lng}`); // Remove from map tracking
-        updateStatusPanel(); // Update status panel
-        saveGameState(); // Save updated state
-      }
-    };
-
-    // Deposit coins into the cache
-    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.onclick = () => {
-      if (playerCoins > 0) {
-        const depositAmount = Math.min(playerCoins, 5);
-        cacheCoins += depositAmount;
-        playerCoins -= depositAmount;
-        totalDepositedCoins += depositAmount; // Update total deposited coins
-        popupDiv.querySelector("#cacheCoins")!.textContent = cacheCoins
-          .toString();
-        updateStatusPanel(); // Update status panel
-        saveGameState(); // Save updated state
-      }
-    };
-
-    // Center map on this cache
-    popupDiv.querySelector<HTMLButtonElement>("#centerMap")!.onclick = () => {
-      map.setView(rect.getBounds().getCenter(), GAMEPLAY_ZOOM_LEVEL);
-    };
-
-    rect.bindPopup(popupDiv);
-    cacheMap.set(`${lat}:${lng}`, { rect, popup: popupDiv });
-  }
-
   // Function to save the game state
   function saveGameState() {
     const gameState = {
@@ -199,10 +196,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const lat = bounds.getSouthWest().lat;
         const lng = bounds.getSouthWest().lng;
         const cacheCoins = parseInt(
-          popup.querySelector("#cacheCoins")?.textContent || "0",
+          popup.querySelector("#cacheCoins")?.textContent || "0"
         );
         const value = parseInt(
-          popup.querySelector("#value")?.textContent || "0",
+          popup.querySelector("#value")?.textContent || "0"
         );
         return { key, lat, lng, cacheCoins, value };
       }),
@@ -230,7 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
           (error) => {
             console.error("Geolocation error:", error.message);
             alert("Unable to access your location.");
-          },
+          }
         );
         alert("Geolocation enabled.");
       } else {
