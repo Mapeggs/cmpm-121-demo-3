@@ -53,10 +53,19 @@ document.addEventListener("DOMContentLoaded", () => {
     { rect: leaflet.Rectangle; popup: HTMLElement }
   >();
 
-  // Function to update the status panel
+  // Function to get the current game state (decoupling data representation)
+  function getGameStatus(): { points: number; coins: number; deposited: number } {
+    return {
+      points: playerPoints,
+      coins: playerCoins,
+      deposited: totalDepositedCoins,
+    };
+  }
+
+  // Function to update the status panel (decoupled rendering logic)
   function updateStatusPanel() {
-    statusPanel.innerHTML =
-      `Points: ${playerPoints} | Coins: ${playerCoins} | Deposited: ${totalDepositedCoins}`;
+    const { points, coins, deposited } = getGameStatus();
+    statusPanel.innerHTML = `Points: ${points} | Coins: ${coins} | Deposited: ${deposited}`;
   }
 
   // Standalone function to create the popup content
